@@ -50,7 +50,6 @@ docker pull ghcr.io/bex/ipguard:latest
 
 # 常驻守护（普通 VPS 上默认就从宿主机公网 IP 出站）：
 docker run -d --name ipguard --restart unless-stopped \
-  -v ips-logs:/opt/ipguard/logs \
   ghcr.io/bex/ipguard:latest
 
 # 一次性命令：
