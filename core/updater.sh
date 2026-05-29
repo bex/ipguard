@@ -5,7 +5,7 @@
 # 核心功能: 指纹防惊群错峰轮换、LBS 底层静默分发、深度探针签名防伪
 # ==========================================================
 
-INSTALL_DIR="/opt/ip_sentinel"
+INSTALL_DIR="/opt/ipguard"
 CONFIG_FILE="${INSTALL_DIR}/config.conf"
 UA_TIME_FILE="${INSTALL_DIR}/core/.ua_last_update"
 
@@ -19,16 +19,15 @@ source "$CONFIG_FILE"
 
 # --- [全局态势日志系统] ---
 log() {
-    local local_ver="${AGENT_VERSION:-未知}"
     
     mkdir -p "${INSTALL_DIR}/logs"
 
-    local core_msg=$(printf "[v%-5s] [%-5s] [%-7s] [%s] %s" "$local_ver" "$2" "$1" "$REGION_CODE" "$3")
+    local core_msg=$(printf "[%-5s] [%-7s] [%s] %s" "$2" "$1" "$REGION_CODE" "$3")
     # 强制剔除节点宿主机本地时差，严格对齐指挥部 UTC 基准
     echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $core_msg" >> "$LOG_FILE"
 
     if command -v logger >/dev/null 2>&1; then
-        logger -t ip-sentinel "$core_msg"
+        logger -t ipguard "$core_msg"
     else
         echo "$core_msg"
     fi
@@ -68,7 +67,7 @@ fi
 DIFF=$((NOW - LAST_UPDATE))
 
 if [ "$DIFF" -ge 2592000 ] || [ "$LAST_UPDATE" -eq 0 ]; then
-    TMP_UA="/tmp/ip_sentinel_ua.txt"
+    TMP_UA="/tmp/ipguard_ua.txt"
     $CURL_CMD "${REPO_RAW_URL}/data/user_agents.txt" -o "$TMP_UA"
     
     if [ -s "$TMP_UA" ]; then
@@ -87,7 +86,7 @@ fi
 # ----------------------------------------------------------
 # [态势感知热更] 动态注入本土高权热搜及战区 LBS 规则
 # ----------------------------------------------------------
-TMP_KW="/tmp/ip_sentinel_kw.txt"
+TMP_KW="/tmp/ipguard_kw.txt"
 $CURL_CMD "${REPO_RAW_URL}/data/keywords/kw_${REGION_CODE}.txt" -o "$TMP_KW"
 
 if [ -s "$TMP_KW" ]; then
@@ -102,7 +101,7 @@ REGION_JSON_FILE=$(find "${INSTALL_DIR}/data/regions" -name "*.json" 2>/dev/null
 
 if [ -n "$REGION_JSON_FILE" ] && [ -f "$REGION_JSON_FILE" ]; then
     REL_PATH=${REGION_JSON_FILE#*${INSTALL_DIR}/}
-    TMP_JSON="/tmp/ip_sentinel_region.json"
+    TMP_JSON="/tmp/ipguard_region.json"
     
     $CURL_CMD "${REPO_RAW_URL}/${REL_PATH}" -o "$TMP_JSON"
     
@@ -115,21 +114,10 @@ if [ -n "$REGION_JSON_FILE" ] && [ -f "$REGION_JSON_FILE" ]; then
     fi
 fi
 
-# ==========================================================
-# [容灾校验] 外置供应链投毒防线与底层签名嗅探
-# ==========================================================
-TMP_PROBE="/tmp/ip_sentinel_probe.sh"
-$CURL_CMD "https://raw.githubusercontent.com/xykt/IPQuality/main/ip.sh" -o "$TMP_PROBE"
-
-# 严格过滤无标识或 HTML 劫持阻断页面，免疫上游源的降级攻击
-if [ -s "$TMP_PROBE" ] && grep -q "xykt" "$TMP_PROBE" 2>/dev/null; then
-    mv "$TMP_PROBE" "${INSTALL_DIR}/core/ip_probe.sh"
-    chmod +x "${INSTALL_DIR}/core/ip_probe.sh"
-    log "Updater" "INFO " "✅ 深海声呐底层探针 (ip_probe.sh) 源文件安全对齐"
-else
-    log "Updater" "WARN " "❌ 探针源文件拉取受损或遭投毒劫持，已触发防砖机制，保留本地旧版本"
-    rm -f "$TMP_PROBE" 2>/dev/null
-fi
+# [standalone] The IP-quality probe (ip_probe.sh) is fetched ONCE at install /
+# first startup and then reused. It is intentionally NOT re-downloaded on a
+# schedule here -- avoids a daily third-party fetch and supply-chain exposure.
+# mod_quality.sh still self-heals (re-fetches) only if the file is missing.
 
 # ==========================================================
 # [空间瘦身] 长效健康清理与爆栈预防机制

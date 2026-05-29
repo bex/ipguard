@@ -5,7 +5,7 @@
 # 核心功能: 动态扫描本地 LBS 冷数据，提取权威白名单，执行流量净化
 # ==========================================================
 
-INSTALL_DIR="/opt/ip_sentinel"
+INSTALL_DIR="/opt/ipguard"
 CONFIG_FILE="${INSTALL_DIR}/config.conf"
 UA_FILE="${INSTALL_DIR}/data/user_agents.txt"
 REPO_RAW_URL="https://raw.githubusercontent.com/hotyue/IP-Sentinel/main"
@@ -15,7 +15,7 @@ REPO_RAW_URL="https://raw.githubusercontent.com/hotyue/IP-Sentinel/main"
 source "$CONFIG_FILE"
 
 REGION=${REGION_CODE:-"US"}
-LOG_FILE="${INSTALL_DIR}/logs/sentinel.log"
+LOG_FILE="${INSTALL_DIR}/logs/ipguard.log"
 
 # ==========================================================
 # 1. 动态获取配置 (拓扑自适应与兜底机制)
@@ -50,10 +50,9 @@ log_msg() {
     local TYPE=$1
     local MSG=$2
     local TIME=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
-    local local_ver="${AGENT_VERSION:-未知}"
 
-    printf "[%s] [v%-5s] [%-5s] [Trust  ] [%s] %s\n" \
-        "$TIME" "$local_ver" "$TYPE" "$REGION" "$MSG" | tee -a "$LOG_FILE"
+    printf "[%s] [%-5s] [Trust  ] [%s] %s\n" \
+        "$TIME" "$TYPE" "$REGION" "$MSG" | tee -a "$LOG_FILE"
 }
 
 # ==========================================================

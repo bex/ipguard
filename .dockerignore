@@ -1,0 +1,10 @@
+# Keep the build context small and reproducible.
+.git
+.gitignore
+.github
+README.md
+*.md
+# Local artifacts that must never leak into the image
+config.conf
+logs/
+*.log

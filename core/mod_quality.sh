@@ -1,10 +1,10 @@
 #!/bin/bash
 # ==========================================================
-# IP-Sentinel: 深海声呐 (IP 质量全维异步检测模块)
+# IPGuard: 深海声呐 (IP 质量全维异步检测模块)
 # 核心功能: 动态路由寻路、第三方 API 容灾获取、流媒体解锁链路剖析
 # ==========================================================
 
-source /opt/ip_sentinel/config.conf
+source /opt/ipguard/config.conf
 
 # ==========================================================
 # 1. 动态网络锚定与协议自适应
@@ -36,7 +36,7 @@ PROBE_ARGS+=("-${DYNAMIC_IP_PREF}")
 # ----------------------------------------------------------
 # 2. 智能拉取引擎 (防 RCE 与 文件防伪校验)
 # ----------------------------------------------------------
-PROBE_SCRIPT="/opt/ip_sentinel/core/ip_probe.sh"
+PROBE_SCRIPT="/opt/ipguard/core/ip_probe.sh"
 
 # [完整性校验] 验证本地残留脚本是否损坏 (防止因被墙或拦截导致本地缓存了无效的 HTML 报错页)
 if [ -f "$PROBE_SCRIPT" ] && ! grep -q "xykt" "$PROBE_SCRIPT" 2>/dev/null; then
@@ -99,20 +99,26 @@ fi
 # ==========================================================
 
 # 确保连通性后执行探测，放宽超时阈值以给予第三方 API 充足响应时间
-RAW_OUTPUT=$(timeout 300 bash "$PROBE_SCRIPT" "${FINAL_ARGS[@]}" 2>/dev/null)
+# [standalone] Probe output is shown live (tee) AND captured for parsing.
+# This can take up to ~5 minutes while it queries the fraud / media databases.
+echo "[mod_quality] Running IP quality probe (deep-sea sonar). This can take up to ~5 minutes, please wait..."
+PROBE_OUT=$(mktemp)
+timeout 300 bash "$PROBE_SCRIPT" "${FINAL_ARGS[@]}" 2>/dev/null | tee "$PROBE_OUT"
+RAW_OUTPUT=$(cat "$PROBE_OUT")
+rm -f "$PROBE_OUT"
 JSON_DATA="{${RAW_OUTPUT#*\{}"
 ESC=$(printf '\033')
 JSON_DATA=$(printf "%s" "$JSON_DATA" | sed -e "s/${ESC}\[[0-9;]*[a-zA-Z]//g" -e "s/${ESC}[0-9;]*[a-zA-Z]//g" -e "s/x1b\\[[0-9;]*[a-zA-Z]//g" -e "s/x1b[0-9;]*[a-zA-Z]//g")
 IP_ADDR=$(echo "$JSON_DATA" | jq -r '.Head.IP // empty' 2>/dev/null)
 
+# [standalone] Local output sink. No master/Telegram; results go to stdout + log.
+QUALITY_LOG="${INSTALL_DIR:-/opt/ipguard}/logs/quality.log"
+mkdir -p "$(dirname "$QUALITY_LOG")"
+
 if [ -z "$IP_ADDR" ]; then
-    curl -s -X POST "${TG_API_URL}" \
-        -d "chat_id=${CHAT_ID}" \
-        -d "parse_mode=Markdown" \
-        -d "text=❌ *深海声呐探测失败*
-📍 节点：\`${NODE_ALIAS}\`
-🌐 锁定IP：\`${PUBLIC_IP}\`
-⚠️ *未收到有效回波。检测源超时或数据解析受阻。*" >/dev/null
+    FAIL_MSG="[Quality] Deep-sea sonar probe FAILED on node ${NODE_ALIAS:-${NODE_NAME:-local}} (IP ${PUBLIC_IP}): no valid response, probe source timed out or parsing blocked."
+    echo "$FAIL_MSG"
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $FAIL_MSG" >> "$QUALITY_LOG"
     exit 1
 fi
 
@@ -197,13 +203,12 @@ fi
 # ==========================================================
 # 5. 组装情报级 Markdown 战报与回调构造
 # ==========================================================
-LOCAL_VER="${AGENT_VERSION:-未知}"
 CURRENT_TIME=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
 
 # 强制使用中枢下发的真实 IP 拼接，以防探针星号掩码导致直达链接失效
 LINK_IP=$(echo "$PUBLIC_IP" | tr -d '[]')
 
-REPORT="🎯 *IP-Sentinel 深海声呐报告*
+REPORT="🎯 *IPGuard 深海声呐报告*
 📍 节点：\`${NODE_ALIAS}\`
 🌐 地址：\`${IP_ADDR}\`${WARNING_MSG}
 
@@ -234,40 +239,14 @@ REPORT="🎯 *IP-Sentinel 深海声呐报告*
 
 _👉 [🔍 详细信用图谱直达 (Scamalytics)](https://scamalytics.com/ip/${LINK_IP})_
 
-⏱️ \`${CURRENT_TIME}\` | ⚙️ \`v${LOCAL_VER}\`"
+⏱️ \`${CURRENT_TIME}\`"
 
-# [核心数据萃取] 剥离非数字残留，确保传给 Master 趋势数据库的纯净性
-SAFE_SCAM_SCORE=$(echo "$SCAM_SCORE" | tr -cd '0-9')
-[ -z "$SAFE_SCAM_SCORE" ] && SAFE_SCAM_SCORE="0"
-
-# 提取 Google(基于YouTube) 和 ChatGPT 的原生状态
-RAW_GOOG_STAT="${RAW_YT_REG:-$RAW_YT_STAT}"
-[ -z "$RAW_GOOG_STAT" ] && RAW_GOOG_STAT="未知"
-RAW_GPT_STAT=$(echo "$JSON_DATA" | jq -r '.Media.ChatGPT.Status // "未知"' 2>/dev/null)
-
-# 废除可能导致中文字符截断乱码的强制限制，改用去隐形换行符的安全传递策略
-S_GOOG=$(echo "$RAW_GOOG_STAT" | tr -d '\n\r ')
-S_NF=$(echo "$RAW_NF_STAT" | tr -d '\n\r ')
-S_GPT=$(echo "$RAW_GPT_STAT" | tr -d '\n\r ')
-CB_DATA="svq|${NODE_NAME}|${SAFE_SCAM_SCORE}|${S_GOOG}|${S_NF}|${S_GPT}"
-
-# 挂载内联键盘并直送指挥部
-JSON_PAYLOAD=$(jq -n \
-  --arg cid "$CHAT_ID" \
-  --arg txt "$REPORT" \
-  --arg cb "$CB_DATA" \
-  --arg cb_manage "manage:${NODE_NAME}" \
-  '{
-    chat_id: $cid,
-    text: $txt,
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    reply_markup: {
-      inline_keyboard: [
-        [{text: "📥 将本次体检录入趋势库", callback_data: $cb}],
-        [{text: "⚙️ 调出该节点控制台", callback_data: $cb_manage}]
-      ]
-    }
-  }')
-
-curl -s -X POST "${TG_API_URL}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" >/dev/null
+# [standalone] Emit the report locally: print to stdout (captured by the
+# systemd journal when run as a service) and append a timestamped copy to the
+# quality log. No remote command center is contacted.
+echo "$REPORT"
+{
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] ===== Deep-sea sonar report ====="
+    echo "$REPORT"
+    echo ""
+} >> "$QUALITY_LOG"

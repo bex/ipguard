@@ -6,7 +6,7 @@
 # ==========================================================
 
 MODULE_NAME="Google"
-CONFIG_FILE="/opt/ip_sentinel/config.conf"
+CONFIG_FILE="/opt/ipguard/config.conf"
 
 # --- [环境预载] ---
 if [ -f "$CONFIG_FILE" ]; then
@@ -19,18 +19,17 @@ fi
 # [容灾机制] 若宿主环境未注入日志函数，则启动 Fallback 接管
 if ! type log >/dev/null 2>&1; then
     log() {
-        # [版本锚定] 提取运行时动态版本标识
-        local local_ver="${AGENT_VERSION:-未知}"
+        # (fallback log helper)
         
         mkdir -p "${INSTALL_DIR}/logs"
     
         # [时区对齐] 强制采用绝对 UTC 时间消除跨域日志偏移
-        local core_msg=$(printf "[v%-5s] [%-5s] [%-7s] [%s] %s" "$local_ver" "$2" "$1" "$REGION_CODE" "$3")
-        echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $core_msg" >> "${INSTALL_DIR}/logs/sentinel.log"
+        local core_msg=$(printf "[%-5s] [%-7s] [%s] %s" "$2" "$1" "$REGION_CODE" "$3")
+        echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $core_msg" >> "${INSTALL_DIR}/logs/ipguard.log"
 
         # [系统挂载] 桥接至 Systemd Journal 守护日志
         if command -v logger >/dev/null 2>&1; then
-            logger -t ip-sentinel "$core_msg"
+            logger -t ipguard "$core_msg"
         else
             echo "$core_msg"
         fi

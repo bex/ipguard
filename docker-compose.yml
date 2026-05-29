@@ -1,0 +1,52 @@
+# IPGuard (standalone) - docker compose / podman compose
+#
+#   docker compose up -d              # pull the published image and start
+#   docker compose up -d --build      # build locally instead (uncomment build:)
+#   docker compose logs -f            # follow module logs
+#   docker compose run --rm ipguard quality   # one-shot IP quality check
+#   docker compose down               # stop and remove
+#
+# Also works with `podman compose`. The image is multi-arch
+# (linux/amd64, linux/arm64, linux/s390x) and is pulled to match the host.
+#
+# On a normal single-public-IP VPS, default bridge networking already
+# egresses via the host public IP, so no special network config is needed.
+# For multi-IP / site-group hosts where you must egress from a specific
+# address, uncomment `network_mode: host` and set IPS_PUBLIC_IP accordingly.
+
+services:
+  ipguard:
+    image: ghcr.io/bex/ipguard:latest
+    # Build from this repo instead of pulling the published image:
+    # build: .
+    container_name: ipguard
+    restart: unless-stopped
+    environment:
+      # Leave IPS_REGION unset to auto-detect the region from the egress IP geo.
+      # If that country has no bundled rules, it falls back to a same-continent
+      # region, then to US. Set it to force a specific country.
+      # IPS_REGION: "US"
+      # IPS_REGION_FILE: "US/CA/San_Jose.json"  # or pin an exact city rule file
+      IPS_IP_PREF: "4"
+      IPS_ENABLE_GOOGLE: "true"
+      IPS_ENABLE_TRUST: "true"
+      # IPS_PUBLIC_IP: ""        # pin egress IP instead of auto-detect
+      # IPS_NODE_ALIAS: "my-vps"
+      # IPS_RECONFIG: "false"    # set true to regenerate config on restart
+      # Detached (-d) runs are quiet by default (no per-cycle lines in
+      # `docker logs`); the full log lives in the volume below. Force it on
+      # with "true" if you want to watch via `docker compose logs -f`.
+      # IPS_LOG_STDOUT: "false"
+    volumes:
+      - ips-logs:/opt/ipguard/logs
+    # network_mode: host
+    # Cap the docker json log so it cannot grow unbounded over a long -d run.
+    # (Docker only; podman ignores this -- use --log-driver/--log-opt there.)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ips-logs:

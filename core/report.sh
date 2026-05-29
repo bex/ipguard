@@ -1,22 +1,19 @@
 #!/bin/bash
 
 # ==========================================================
-# 脚本名称: tg_report.sh
+# 脚本名称: report.sh
 # 核心功能: 收集并聚合终端特征、提取执行快照、侦测云端版本并生成简报
+# [standalone] No master/Telegram. The summary is printed to stdout and log.
 # ==========================================================
 
-INSTALL_DIR="/opt/ip_sentinel"
+INSTALL_DIR="/opt/ipguard"
 CONFIG_FILE="${INSTALL_DIR}/config.conf"
-LOG_FILE="${INSTALL_DIR}/logs/sentinel.log"
+LOG_FILE="${INSTALL_DIR}/logs/ipguard.log"
+REPORT_LOG="${INSTALL_DIR}/logs/report.log"
 
 # --- [基础自检] ---
 if [ ! -f "$CONFIG_FILE" ]; then exit 1; fi
 source "$CONFIG_FILE"
-
-if [ -z "$TG_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-    echo "⚠️ 未配置 Telegram 机器人参数，取消播报。"
-    exit 0
-fi
 
 # ==========================================================
 # [防线 1] 并发风暴熔断机制 (60s 冷却池)
@@ -28,7 +25,7 @@ if [ -f "$LOCK_FILE" ]; then
     # 严格校验最后执行时间的合法性，防御密集回调
     if [[ "$LAST_RUN" =~ ^[0-9]+$ ]]; then
         if [ $((NOW - LAST_RUN)) -lt 60 ]; then
-            echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] [v${AGENT_VERSION:-未知}] [WARN ] [Report ] [SYSTEM] ⚠️ 战报请求过于频繁，触发 60 秒防并发风暴拦截。" >> "${INSTALL_DIR}/logs/sentinel.log"
+            echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] [WARN ] [Report ] [SYSTEM] ⚠️ 战报请求过于频繁，触发 60 秒防并发风暴拦截。" >> "${INSTALL_DIR}/logs/ipguard.log"
             exit 0
         fi
     fi
@@ -127,7 +124,7 @@ LOG_CONTENT=$(tail -n 1000 "$LOG_FILE" 2>/dev/null)
 
 if [ -z "$LOG_CONTENT" ]; then
     read -r -d '' MSG <<EOT
-🛑 **[IP-Sentinel] 告警：节点异常**
+🛑 **[IPGuard] 告警：节点异常**
 ----------------------------
 📍 **节点名称**: \`${NODE_ALIAS}\`
 ⚠️ **警告**: 过去 24 小时无运行日志！
@@ -140,7 +137,7 @@ else
     LAST_MOD=$(echo "$LAST_LOG_LINE" | awk '{print $4}' | tr -d '[]')
     LAST_SCORE=$(echo "$LAST_LOG_LINE" | awk -F'自检结论: ' '{print $2}')
 
-    MSG="📊 **IP-Sentinel 每日简报 (${FLAG} ${REGION_NAME})**
+    MSG="📊 **IPGuard 每日简报 (${FLAG} ${REGION_NAME})**
 ----------------------------
 📍 **节点名称**: \`${NODE_ALIAS}\`
 📡 **出口 IP**: \`${CURRENT_IP}\`
@@ -191,61 +188,20 @@ else
 fi
 
 # ==========================================================
-# 3. 云端版本探针与 OTA 调度模块
+# 3. Report footer (no version string / no remote update check)
 # ==========================================================
-LOCAL_VER="${AGENT_VERSION:-未知}"
-# [时间线对齐] 强制采用绝对 UTC 时间消除多节点的系统偏差
 REPORT_UTC_TIME=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
-
-REPO_RAW_URL="https://raw.githubusercontent.com/hotyue/IP-Sentinel/main"
-REMOTE_VER=$(curl -s -m 3 "${REPO_RAW_URL}/version.txt" | grep "^AGENT_VERSION=" | cut -d'=' -f2 | tr -d '[:space:]')
 
 MSG="$MSG
 ----------------------------
-🛡️ **系统引擎状态**
-⏱️ 战报生成: \`${REPORT_UTC_TIME}\`"
+Report generated: \`${REPORT_UTC_TIME}\` (UTC)"
 
-# 根据云端版本一致性自动渲染更新提示面板
-if [ -n "$REMOTE_VER" ]; then
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then
-        MSG="$MSG
-当前运行版本: \`v${LOCAL_VER}\`
-✨ **发现新版本**: \`v${REMOTE_VER}\` (建议更新)
-💡 *系统提示：检测到新版引擎，建议通过中枢控制台执行 OTA 热更新！*"
-    else
-        MSG="$MSG
-当前运行版本: \`v${LOCAL_VER}\` (✅已是最新)
-💡 *IP-Sentinel 持续为您守护节点。*
-*若本项目对您有帮助，欢迎前往 GitHub 赐予 🌟*"
-    fi
-else
-    MSG="$MSG
-当前运行版本: \`v${LOCAL_VER}\`
-💡 *IP-Sentinel 持续为您守护节点。*
-*若本项目对您有帮助，欢迎前往 GitHub 赐予 🌟*"
-fi
-
-# --- [下发 API 载荷] ---
-JSON_PAYLOAD=$(jq -n \
-  --arg cid "$CHAT_ID" \
-  --arg txt "$MSG" \
-  --arg cb "manage:${NODE_NAME}" \
-  '{
-    chat_id: $cid,
-    text: $txt,
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    reply_markup: {
-      inline_keyboard: [[{"text": "⚙️ 调出该节点控制台", "callback_data": $cb}]]
-    }
-  }')
-
-RESPONSE=$(curl -s -m 10 -X POST "${TG_API_URL}" \
-    -H "Content-Type: application/json" \
-    -d "$JSON_PAYLOAD")
-
-if [[ "$RESPONSE" != *"\"ok\":true"* ]]; then
-    echo "❌ 战报发送失败！API 响应: $RESPONSE" >> "${INSTALL_DIR}/logs/error.log"
-else
-    echo "✅ 战报推送成功！"
-fi
+# --- [standalone local output] ---
+# Print the summary to stdout (captured by the systemd journal when run as a
+# service) and append a timestamped copy to the report log.
+echo "$MSG"
+{
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] ===== Daily summary ====="
+    echo "$MSG"
+    echo ""
+} >> "$REPORT_LOG"
